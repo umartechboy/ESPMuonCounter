@@ -42,6 +42,7 @@ void setup() {
       }
     }
   }
+  Serial.println("Entering loop");
 }
 
 void loop() {
@@ -52,6 +53,7 @@ void loop() {
     else{
       EEPROM.write(0, pictureNumber);
       EEPROM.commit();
+      pictureNumber++;
     }    
     delay(2000);
   }  

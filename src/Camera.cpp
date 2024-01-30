@@ -59,7 +59,6 @@ bool SavePhoto(String path){
   camera_fb_t * fb = NULL;  
   // Take Picture with Camera
   fb = esp_camera_fb_get();  
-  Serial.println("fb get end");
   ledcWrite(ledChannel, 0);
   if(!fb) {
     Serial.println("Camera capture failed");
@@ -69,7 +68,6 @@ bool SavePhoto(String path){
   // Path where new picture will be saved in SD Card
 
   fs::FS &fs = SD_MMC; 
-  Serial.printf("Picture file name: %s\n", path.c_str());
   
   File file = fs.open(path.c_str(), FILE_WRITE);
   bool saved = false;
