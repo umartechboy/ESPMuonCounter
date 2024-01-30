@@ -11,6 +11,7 @@
 
 // define the number of bytes you want to access
 #define EEPROM_SIZE 1
+bool hasCamera = false;
 
 int pictureNumber = 0;
 void setup() {
@@ -20,25 +21,40 @@ void setup() {
   // initialize EEPROM with predefined size
   EEPROM.begin(EEPROM_SIZE);
 
-  CameraSetup();
-  // initialize EEPROM with predefined size
-  EEPROM.begin(EEPROM_SIZE);
-  pictureNumber = EEPROM.read(0) + 1;
+  if (!CameraSetup()){
+    Serial.println("Camera init failed");
+    hasCamera = false;
+  }
+  else{
+    hasCamera = true;  
+    // initialize EEPROM with predefined size
+    EEPROM.begin(EEPROM_SIZE);
+    pictureNumber = EEPROM.read(64) + 1;    
   
-  String path = "/picture" + String(pictureNumber) +".jpg";
-  SavePhoto(path);
-  EEPROM.write(0, pictureNumber);
-  EEPROM.commit();
-  
-  delay(2000);
-  Serial.println("Going to sleep now");
-  delay(2000);
-  esp_deep_sleep_start();
-  Serial.println("This will never be printed");
+    //Serial.println("Starting SD Card");
+    if(!SD_MMC.begin("/sdcard", true)){
+      Serial.println("SD Card Mount Failed");
+    }
+    else{
+      uint8_t cardType = SD_MMC.cardType();
+      if(cardType == CARD_NONE){
+        Serial.println("No SD Card attached");
+      }
+    }
+  }
 }
 
 void loop() {
-  
+  if (hasCamera){      
+    String path = "/picture" + String(pictureNumber) +".jpg";
+    if(!SavePhoto(path))
+      Serial.println("Photo not saved");
+    else{
+      EEPROM.write(0, pictureNumber);
+      EEPROM.commit();
+    }    
+    delay(2000);
+  }  
 }
 // #include <Arduino.h>
 // #include "Camera.h"

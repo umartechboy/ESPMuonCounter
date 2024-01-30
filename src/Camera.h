@@ -42,5 +42,6 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-void CameraSetup();
-void SavePhoto(String path);
+bool CameraSetup();
+// 0 - 64
+bool SavePhoto(String path);
