@@ -26,7 +26,7 @@ void setup() {
   pictureNumber = EEPROM.read(0) + 1;
   
   String path = "/picture" + String(pictureNumber) +".jpg";
-  SavePhoto(path, false);
+  SavePhoto(path);
   EEPROM.write(0, pictureNumber);
   EEPROM.commit();
   
