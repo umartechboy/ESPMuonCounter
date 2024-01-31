@@ -49,9 +49,9 @@ bool CameraSetup(){
     Serial.printf("Camera init failed with error 0x%x", err);
     return false;
   }
-  // pinMode(FLASH_GPIO_NUM, OUTPUT);
-  ledcSetup(ledChannel, freq, 8);
-  ledcAttachPin(FLASH_GPIO_NUM, ledChannel);
+  //ledcSetup(ledChannel, freq, 8); // Vacate Pin 4
+  //ledcAttachPin(FLASH_GPIO_NUM, ledChannel); // Vacate Pin 4
+  //ledcWrite(ledChannel, 0); // Vacate Pin 4
   return true;
 }
 
@@ -59,7 +59,6 @@ bool SavePhoto(String path){
   camera_fb_t * fb = NULL;  
   // Take Picture with Camera
   fb = esp_camera_fb_get();  
-  ledcWrite(ledChannel, 0);
   if(!fb) {
     Serial.println("Camera capture failed");
     return false;

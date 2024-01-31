@@ -22,7 +22,13 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "Camera.h"
 #include <SFE_BMP180.h>
+#include "FreeSans14pt7b.h"
+#include "FreeSans8pt7b.h"
+#include "FS.h"                // SD Card ESP32
+#include "SD_MMC.h"            // SD Card ESP32
+#include <EEPROM.h>            // read and write from flash memory
 
 SFE_BMP180 pressure;
 double baseline; // baseline pressure
@@ -76,13 +82,14 @@ double getPressure()
         {
           return(P);
         }
-        else Serial.println("error retrieving pressure measurement\n");
+//        else Serial.println("error retrieving pressure measurement\n");
       }
-      else Serial.println("error starting pressure measurement\n");
+      //else Serial.println("error starting pressure measurement\n");
     }
-    else Serial.println("error retrieving temperature measurement\n");
+    //else Serial.println("error retrieving temperature measurement\n");
   }
-  else Serial.println("error starting temperature measurement\n");
+  //else Serial.println("error starting temperature measurement\n");
+  return 0;
 }
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
@@ -99,58 +106,158 @@ double getPressure()
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-#define NUMFLAKES     10 // Number of snowflakes in the animation example
-
-#define LOGO_HEIGHT   16
-#define LOGO_WIDTH    16
-static const unsigned char PROGMEM logo_bmp[] =
-{ 0b00000000, 0b11000000,
-  0b00000001, 0b11000000,
-  0b00000001, 0b11000000,
-  0b00000011, 0b11100000,
-  0b11110011, 0b11100000,
-  0b11111110, 0b11111000,
-  0b01111110, 0b11111111,
-  0b00110011, 0b10011111,
-  0b00011111, 0b11111100,
-  0b00001101, 0b01110000,
-  0b00011011, 0b10100000,
-  0b00111111, 0b11100000,
-  0b00111111, 0b11110000,
-  0b01111100, 0b11110000,
-  0b01110000, 0b01110000,
-  0b00000000, 0b00110000 };
-
+int countA = 0, countB = 0;
+uint16_t logNumber = 1;
+String logFileName;
+String snapShotsDir;
+int snapShotsCount = 0;
+bool hasCamera = false;
+bool hasSD = false;
+void ISR_A(){
+  countA++;
+}
+void ISR_B(){
+  countB++;
+}
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  Wire.begin(13, 15);
+  //Serial.begin(115200);
+  delay(100);
+  Wire.begin(13, 3);
+  
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    //Serial.println(F("SSD1306 allocation failed"));
+  }
+  // else 
+  //   Serial.println(F("SSD1306 allocation done"));
+
+  
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.println("booting...");
+  display.print("bmp 180 init... ");
+  display.display();
+
   if (pressure.begin()) {
-    Serial.println("BMP180 init success");    
+    //Serial.println("BMP180 init success");    
+    display.println("done");
+    display.display();
+
     baseline = getPressure();
     
-    Serial.print("baseline pressure: ");
-    Serial.print(baseline);
-    Serial.println(" mb");  
+    // Serial.print("baseline pressure: ");
+    // Serial.print(baseline);
+    // Serial.println(" mb");  
   }
   else
   {
-    Serial.println("BMP180 init fail (disconnected?)\n\n");
+    // Serial.println("BMP180 init fail (disconnected?)\n\n");
+    display.println("failed");
+    display.display();
   }
 
-  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-  }
-  else 
-    Serial.println(F("SSD1306 allocation done"));
-
-  // Show initial display buffer contents on the screen --
-  // the library initializes this with an Adafruit splash screen.
-  display.clearDisplay();
+  display.print("SD MMC...");
   display.display();
-}
+  
+  //Serial.println("Starting SD Card");
+  if(!SD_MMC.begin("/sdcard", true)){
+    // Serial.println("SD Card Mount Failed");
+    display.println("mount failed");
+    display.display();
+    delay(1000);
+    hasSD = false;
+  }
+  else{
+    uint8_t cardType = SD_MMC.cardType();
+    if(cardType == CARD_NONE){
+      //Serial.println("No SD Card attached");
+      display.println("No SD Card");
+      display.display();
+      delay(1000);
+      hasSD = false;
+    }
+    else {
+      hasSD = true;
+      // Serial.println("SD Card present");
+      display.println("SD OK");
+      display.display();
+    }
+  }
+  display.print("OV2640... ");
+  display.display();
+  hasCamera = CameraSetup();
+  if (hasCamera) {
+    // Serial.println("Camera present");
+    display.println("OK");
+    display.display();
+  } else {    
+    display.println("failed");
+    display.display();
+  }
+  if (hasSD) {
+    delay(1000);
+    
+    for (int i =0 ; i< 0xFFFF && hasSD;i++){
+      String fName = String("/M Log ") + String(i) + String(".csv");
+      // Serial.print("Checking ");
+      // Serial.print(fName);
+      if (SD_MMC.exists(fName)){
+        // Serial.println(", exists");
+        continue;
+      }
+        // Serial.println(", doesn't exist");
+      // we have found an available slot. Create the file.
+      File f = SD_MMC.open(fName, FILE_WRITE);
+      f.println("FlightTime_s,CountA_N,CountB_N,Altitude_ft");
+      f.close();
+      logFileName = fName;
+      // Serial.print("Log file name: ");
+      // Serial.println(logFileName);
+      if (hasCamera) {
+        snapShotsDir = String("/snapshots_") + String(i);
+        if (!SD_MMC.exists(snapShotsDir)){
+          SD_MMC.mkdir(snapShotsDir);
+        }
+        // Serial.print("Snap shots directory: ");
+        // Serial.println(snapShotsDir);
+      }
+      break;
+    }
 
+    // Show initial display buffer contents on the screen --
+    // the library initializes this with an Adafruit splash screen.
+    display.clearDisplay();
+    display.setTextColor(WHITE);
+    display.setCursor(0, 0);
+    display.println("Saving at:");
+    display.setFont(&FreeSans8pt7b);
+    display.setCursor(0,25);
+    display.print(logFileName);
+    display.display();
+    
+    for(int i = 5; i >= 0 ; i--){
+      display.setFont();
+      display.fillRect(100, 24, 28, 8, BLACK);
+      display.setCursor(122, 24);
+      display.print(i);
+      display.display();
+      delay(1000);
+    }
+  }
+
+  pinMode(4, INPUT);
+  pinMode(1, INPUT);
+  attachInterrupt(4, ISR_A, RISING); // flash pin
+  attachInterrupt(1, ISR_B, RISING); // TX pin
+  delay(100);
+  countA = 0;
+  countB = 0;
+}
+long lastCountA = 0;
+long lastCountB = 0;
+double lastAltitude = 0;
+long lastLoggedAt = 0;
+int photoNumber = 1;
 void loop() {
   
   double a,P;
@@ -163,27 +270,102 @@ void loop() {
 
   a = pressure.altitude(P, baseline);
   
-  Serial.println("Relative altitude: ");
-  if (a >= 0.0) Serial.print(" "); // add a space for positive numbers
-  Serial.print(a,1);
-  Serial.print(" meters, ");
-  if (a >= 0.0) Serial.print(" "); // add a space for positive numbers
-  Serial.print(a*3.28084,0);
-  Serial.println(" feet");
+  // Serial.print("Relative altitude: ");
+  // if (a >= 0.0) Serial.print(" "); // add a space for positive numbers
+  // Serial.print(a,1);
+  // Serial.print(" meters, ");
+  // if (a >= 0.0) Serial.print(" "); // add a space for positive numbers
+  // Serial.print(a*3.28084,0);
+  // Serial.print(" feet, Count A: ");
+  // Serial.print(countA);
+  // Serial.print(", Count B: ");
+  // Serial.println(countB);
   
-  display.setCursor(0, 0);
-  display.setTextColor(SSD1306_WHITE);
+  
+  // display.setCursor(0, 0);
+  // display.setTextColor(SSD1306_WHITE);
+  // display.clearDisplay();
+  // display.println("relative altitude: ");
+  // if (a >= 0.0) display.print(" "); // add a space for positive numbers
+  // display.print(a,1);
+  // display.print(" meters, ");
+  // if (a >= 0.0) display.print(" "); // add a space for positive numbers
+  // display.print(a*3.28084,0);
+  // display.println(" feet");
+
+  // display.print("A: ");
+  // display.print(countA);
+  // display.print(", B: ");
+  // display.println(countB);
+  // display.display();
+
   display.clearDisplay();
-  display.print("relative altitude: ");
-  if (a >= 0.0) display.print(" "); // add a space for positive numbers
-  display.print(a,1);
-  display.print(" meters, ");
-  if (a >= 0.0) display.print(" "); // add a space for positive numbers
+
+  display.setFont(&FreeSans8pt7b);
+
+  display.fillRect(0, 0, 12, 32, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor(1, 11);
+  display.print("A");
+  display.setCursor(1, 30);
+  display.print("B");
+
+  display.setTextColor(WHITE);
+  display.setCursor(16, 11);
+  display.print(countA);
+  display.setCursor(16, 30);
+  display.println(countB);
+  
+  display.setCursor(90, 11);
   display.print(a*3.28084,0);
-  display.println(" feet");
+  display.print("ft");
+  
+  int x = 128;
+  int y = 24;
+  if (hasCamera){
+    x -= 16;
+    display.fillRoundRect(x + 8 - 3, y - 7, 6, 6, 1, WHITE);
+    display.fillRoundRect(x, y - 5, 16, 12, 3, WHITE);
+    display.fillCircle(x + 8, y, 3, BLACK);
+    display.drawLine(x + 8 - 2, y - 6 + 1, x + 8 + 1, y - 6 + 1, BLACK);
+    x -= 3; // margin
+  }
+  if (hasSD){
+    x -= 16; // size
+    display.fillRoundRect(x, y - 3, 16, 10, 1, WHITE);
+    display.fillRoundRect(x + 4, y - 5, 12, 10, 1, WHITE);
+    display.setFont();
+    display.setCursor(x + 2 , y - 2);
+    display.setTextColor(BLACK);
+    display.print("SD");
+  }
+  
+
   display.display();
   
-  delay(500);
+  delay(250);
+  if ((lastCountA != countA || lastCountB != countB || abs(a - lastAltitude) > 1 || (millis() - lastLoggedAt) > 60000)
+      &&
+      (millis() - lastLoggedAt > 1000 && hasSD)){
+    File file = SD_MMC.open(logFileName, FILE_APPEND);
+    file.print(millis() / 1000.0F, 0); file.print(",");
+    file.print(countA); file.print(",");
+    file.print(countB); file.print(",");
+    file.println(a);
+    file.close();
+    //Serial.print("#");
+    if(hasCamera){
+      String photoName = snapShotsDir + "/snap " + String(photoNumber) + ".jpg";
+      SavePhoto(photoName);
+      //Serial.print("@");
+      photoNumber++;
+    }
+    //Serial.println();
+    lastCountA = countA;
+    lastCountB = countB;
+    lastAltitude = a;
+    lastLoggedAt = millis();
+  }
 }
 // // #include <Arduino.h>
 // // #include "Camera.h"
