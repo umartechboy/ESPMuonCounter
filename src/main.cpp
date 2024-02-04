@@ -20,6 +20,7 @@
 
 #include <SPI.h>
 #include <Wire.h>
+#include <WiFi.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "Camera.h"
@@ -29,9 +30,12 @@
 #include "FS.h"                // SD Card ESP32
 #include "SD_MMC.h"            // SD Card ESP32
 #include <EEPROM.h>            // read and write from flash memory
+#include <FTPServer.h>
 
 SFE_BMP180 pressure;
 double baseline; // baseline pressure
+
+FTPServer ftpSrv(SD_MMC); // construct with LittleFS
 
 double getPressure()
 {
@@ -245,6 +249,16 @@ void setup() {
     }
   }
 
+  // start FTP
+  
+  WiFi.softAP("Muon Counter", "12345678");
+  // setup the ftp server with username and password
+  // ports are defined in FTPCommon.h, default is
+  //   21 for the control connection
+  //   50009 for the data connection (passive mode by default)
+  ftpSrv.begin(F("ftp"), F("ftp")); //username, password for ftp.  set ports in ESP8266FtpServer.h  (default 21, 50009 for PASV)
+
+
   pinMode(4, INPUT);
   pinMode(1, INPUT);
   attachInterrupt(4, ISR_A, RISING); // flash pin
@@ -258,8 +272,10 @@ long lastCountB = 0;
 double lastAltitude = 0;
 long lastLoggedAt = 0;
 int photoNumber = 1;
+long lastScreenUpdate = 0;
 void loop() {
   
+  ftpSrv.handleFTP();
   double a,P;
   // Get a new pressure reading:
 
@@ -299,51 +315,53 @@ void loop() {
   // display.println(countB);
   // display.display();
 
-  display.clearDisplay();
+  if (millis() - lastScreenUpdate > 500){
+    display.clearDisplay();
 
-  display.setFont(&FreeSans8pt7b);
+    display.setFont(&FreeSans8pt7b);
 
-  display.fillRect(0, 0, 12, 32, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor(1, 11);
-  display.print("A");
-  display.setCursor(1, 30);
-  display.print("B");
-
-  display.setTextColor(WHITE);
-  display.setCursor(16, 11);
-  display.print(countA);
-  display.setCursor(16, 30);
-  display.println(countB);
-  
-  display.setCursor(90, 11);
-  display.print(a*3.28084,0);
-  display.print("ft");
-  
-  int x = 128;
-  int y = 24;
-  if (hasCamera){
-    x -= 16;
-    display.fillRoundRect(x + 8 - 3, y - 7, 6, 6, 1, WHITE);
-    display.fillRoundRect(x, y - 5, 16, 12, 3, WHITE);
-    display.fillCircle(x + 8, y, 3, BLACK);
-    display.drawLine(x + 8 - 2, y - 6 + 1, x + 8 + 1, y - 6 + 1, BLACK);
-    x -= 3; // margin
-  }
-  if (hasSD){
-    x -= 16; // size
-    display.fillRoundRect(x, y - 3, 16, 10, 1, WHITE);
-    display.fillRoundRect(x + 4, y - 5, 12, 10, 1, WHITE);
-    display.setFont();
-    display.setCursor(x + 2 , y - 2);
+    display.fillRect(0, 0, 12, 32, WHITE);
     display.setTextColor(BLACK);
-    display.print("SD");
-  }
-  
+    display.setCursor(1, 11);
+    display.print("A");
+    display.setCursor(1, 30);
+    display.print("B");
 
-  display.display();
+    display.setTextColor(WHITE);
+    display.setCursor(16, 11);
+    display.print(countA);
+    display.setCursor(16, 30);
+    display.println(countB);
+    
+    display.setCursor(90, 11);
+    display.print(a*3.28084,0);
+    display.print("ft");
   
-  delay(250);
+    int x = 128;
+    int y = 24;
+    if (hasCamera){
+      x -= 16;
+      display.fillRoundRect(x + 8 - 3, y - 7, 6, 6, 1, WHITE);
+      display.fillRoundRect(x, y - 5, 16, 12, 3, WHITE);
+      display.fillCircle(x + 8, y, 3, BLACK);
+      display.drawLine(x + 8 - 2, y - 6 + 1, x + 8 + 1, y - 6 + 1, BLACK);
+      x -= 3; // margin
+    }
+    if (hasSD){
+      x -= 16; // size
+      display.fillRoundRect(x, y - 3, 16, 10, 1, WHITE);
+      display.fillRoundRect(x + 4, y - 5, 12, 10, 1, WHITE);
+      display.setFont();
+      display.setCursor(x + 2 , y - 2);
+      display.setTextColor(BLACK);
+      display.print("SD");
+    }
+    
+    display.display();
+    lastScreenUpdate = millis();
+  }
+  // make sure to call handleFTP() frequently
+  ftpSrv.handleFTP();
   if ((lastCountA != countA || lastCountB != countB || abs(a - lastAltitude) > 1 || (millis() - lastLoggedAt) > 60000)
       &&
       (millis() - lastLoggedAt > 1000 && hasSD)){
