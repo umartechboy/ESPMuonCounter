@@ -30,12 +30,20 @@
 #include "FS.h"                // SD Card ESP32
 #include "SD_MMC.h"            // SD Card ESP32
 #include <EEPROM.h>            // read and write from flash memory
-#include <FTPServer.h>
+#include <ESP-FTP-Server-Lib.h>
+#include <FTPFilesystem.h>
+
+#define FTP_USER "ftp"
+#define FTP_PASSWORD "ftp"
+
+#define BuildForDebugging 0
 
 SFE_BMP180 pressure;
 double baseline; // baseline pressure
 
-FTPServer ftpSrv(SD_MMC); // construct with LittleFS
+#define WriteLog(_f, _serial, _time, _countA, _countB, _pressure) { _f.print(_serial); _f.print(","); _f.print(_time); _f.print(","); _f.print(_countA); _f.print(","); _f.print(_countB); _f.print(","); _f.print(_pressure); _f.print("\r\n"); }
+#define LogEntry(_fName, _serial, _time, _countA, _countB, _pressure) {File _f = SD_MMC.open(_fName, FILE_APPEND); if (!_f) Serial.println("Couldn't open log file"); else {WriteLog(_f, _serial, _time, _countA, _countB, _pressure); _f.close(); WriteLog(Serial, _serial, _time, _countA, _countB, _pressure); }}
+FTPServer ftp;
 
 double getPressure()
 {
@@ -124,9 +132,11 @@ void ISR_B(){
   countB++;
 }
 void setup() {
-  //Serial.begin(115200);
+#if BuildForDebugging
+  Serial.begin(115200, SERIAL_8N1, -1, 1);// no receive. GPIO3  goes to Wire
+#endif
   delay(100);
-  Wire.begin(13, 3);
+  Wire.begin(13, 3); // SerialTx pin
   
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -174,7 +184,7 @@ void setup() {
   else{
     uint8_t cardType = SD_MMC.cardType();
     if(cardType == CARD_NONE){
-      //Serial.println("No SD Card attached");
+      Serial.println("No SD Card attached");
       display.println("No SD Card");
       display.display();
       delay(1000);
@@ -182,7 +192,7 @@ void setup() {
     }
     else {
       hasSD = true;
-      // Serial.println("SD Card present");
+      Serial.println("SD Card present");
       display.println("SD OK");
       display.display();
     }
@@ -191,7 +201,7 @@ void setup() {
   display.display();
   hasCamera = CameraSetup();
   if (hasCamera) {
-    // Serial.println("Camera present");
+    Serial.println("Camera present");
     display.println("OK");
     display.display();
   } else {    
@@ -201,7 +211,7 @@ void setup() {
   if (hasSD) {
     delay(1000);
     
-    for (int i =0 ; i< 0xFFFF && hasSD;i++){
+    for (int i = 1 ; i< 0xFFFF && hasSD;i++){
       String fName = String("/M Log ") + String(i) + String(".csv");
       // Serial.print("Checking ");
       // Serial.print(fName);
@@ -211,9 +221,7 @@ void setup() {
       }
         // Serial.println(", doesn't exist");
       // we have found an available slot. Create the file.
-      File f = SD_MMC.open(fName, FILE_WRITE);
-      f.println("FlightTime_s,CountA_N,CountB_N,Altitude_ft");
-      f.close();
+      LogEntry(fName, "SerialNo", "Time_s", "MuonCountA", "MuonCountB", "Altitude_ft");
       logFileName = fName;
       // Serial.print("Log file name: ");
       // Serial.println(logFileName);
@@ -252,30 +260,35 @@ void setup() {
   // start FTP
   
   WiFi.softAP("Muon Counter", "12345678");
-  // setup the ftp server with username and password
-  // ports are defined in FTPCommon.h, default is
-  //   21 for the control connection
-  //   50009 for the data connection (passive mode by default)
-  ftpSrv.begin(F("ftp"), F("ftp")); //username, password for ftp.  set ports in ESP8266FtpServer.h  (default 21, 50009 for PASV)
+  
+  ftp.addUser(FTP_USER, FTP_PASSWORD);
+  ftp.addFilesystem("SD", &SD_MMC);
+  ftp.begin();
 
 
   pinMode(4, INPUT);
-  pinMode(1, INPUT);
   attachInterrupt(4, ISR_A, RISING); // flash pin
+  #if BuildForDebugging
+  #warning Enable it in real build
+  #else
+  pinMode(1, INPUT);
   attachInterrupt(1, ISR_B, RISING); // TX pin
+  #endif
   delay(100);
   countA = 0;
   countB = 0;
 }
 long lastCountA = 0;
 long lastCountB = 0;
+float smoothAltitude = 0;
 double lastAltitude = 0;
 long lastLoggedAt = 0;
 int photoNumber = 1;
 long lastScreenUpdate = 0;
+int logEntryIndex = 1;
 void loop() {
   
-  ftpSrv.handleFTP();
+  ftp.handle();
   double a,P;
   // Get a new pressure reading:
 
@@ -285,7 +298,9 @@ void loop() {
   // the new reading and the baseline reading:
 
   a = pressure.altitude(P, baseline);
-  
+  float fac = 0.01;
+  smoothAltitude = a * fac + smoothAltitude * (1 - fac);
+  a = smoothAltitude;
   // Serial.print("Relative altitude: ");
   // if (a >= 0.0) Serial.print(" "); // add a space for positive numbers
   // Serial.print(a,1);
@@ -296,8 +311,6 @@ void loop() {
   // Serial.print(countA);
   // Serial.print(", Count B: ");
   // Serial.println(countB);
-  
-  
   // display.setCursor(0, 0);
   // display.setTextColor(SSD1306_WHITE);
   // display.clearDisplay();
@@ -308,13 +321,14 @@ void loop() {
   // if (a >= 0.0) display.print(" "); // add a space for positive numbers
   // display.print(a*3.28084,0);
   // display.println(" feet");
-
   // display.print("A: ");
   // display.print(countA);
   // display.print(", B: ");
   // display.println(countB);
   // display.display();
 
+
+  // Display Update loop
   if (millis() - lastScreenUpdate > 500){
     display.clearDisplay();
 
@@ -358,19 +372,15 @@ void loop() {
     }
     
     display.display();
+    Serial.print(".");
     lastScreenUpdate = millis();
   }
-  // make sure to call handleFTP() frequently
-  ftpSrv.handleFTP();
-  if ((lastCountA != countA || lastCountB != countB || abs(a - lastAltitude) > 1 || (millis() - lastLoggedAt) > 60000)
+  
+  if ((lastCountA != countA || lastCountB != countB || abs(a - lastAltitude) > 1 || (millis() - lastLoggedAt) > 5000)
       &&
       (millis() - lastLoggedAt > 1000 && hasSD)){
-    File file = SD_MMC.open(logFileName, FILE_APPEND);
-    file.print(millis() / 1000.0F, 0); file.print(",");
-    file.print(countA); file.print(",");
-    file.print(countB); file.print(",");
-    file.println(a);
-    file.close();
+    LogEntry(logFileName, logEntryIndex, String(millis() / 1000.0F, 1), countA, countB, a * 3.28084);
+    logEntryIndex++;
     //Serial.print("#");
     if(hasCamera){
       String photoName = snapShotsDir + "/snap " + String(photoNumber) + ".jpg";
