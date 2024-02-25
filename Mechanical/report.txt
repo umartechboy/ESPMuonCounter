@@ -1,0 +1,19 @@
+﻿Report Name: D:\UserProfile\Documents\GitHub\ESPMuonCounter\Mechanical\report.txt
+Report Time: 2/23/2024 7:25:33 PM
+Report Options:
+    Part Names
+
+Select Set #1:
+    Case Bottom Holding.par:1
+
+Select Set #2:
+    AdapterPCB.par:1
+    ESP32 Cam.par:1
+    Booster.par:1
+
+Interferences:
+    1 of 1
+    Case Bottom Holding.par:1
+    ESP32 Cam.par:1
+
+    1 Interferences Detected
