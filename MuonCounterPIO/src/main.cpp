@@ -32,17 +32,40 @@
 #include <EEPROM.h>            // read and write from flash memory
 #include <ESP-FTP-Server-Lib.h>
 #include <FTPFilesystem.h>
+#include <Update.h>
 
 #define FTP_USER "ftp"
 #define FTP_PASSWORD "ftp"
 
 #define BuildForDebugging 0
 
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 32 // OLED display height, in pixels
+#define SSD1306_WHITE WHITE
+#define SSD1306_BLACK BLACK
+#define SSD1306_INVERSE INVERSE
+
+// The pins for I2C are defined by the Wire-library. 
+// On an arduino UNO:       A4(SDA), A5(SCL)
+// On an arduino MEGA 2560: 20(SDA), 21(SCL)
+// On an arduino LEONARDO:   2(SDA),  3(SCL), ...
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+int countA = 0, countB = 0;
+uint16_t logNumber = 1;
+String logFileName;
+String snapShotsDir;
+int snapShotsCount = 0;
+bool hasCamera = false;
+bool hasSD = false;
+
 SFE_BMP180 pressure;
 double baseline; // baseline pressure
 
 #define WriteLog(_f, _serial, _time, _countA, _countB, _pressure) { _f.print(_serial); _f.print(","); _f.print(_time); _f.print(","); _f.print(_countA); _f.print(","); _f.print(_countB); _f.print(","); _f.print(_pressure); _f.print("\r\n"); }
-#define LogEntry(_fName, _serial, _time, _countA, _countB, _pressure) {File _f = SD_MMC.open(_fName, FILE_APPEND); if (!_f) Serial.println("Couldn't open log file"); else {WriteLog(_f, _serial, _time, _countA, _countB, _pressure); _f.close(); WriteLog(Serial, _serial, _time, _countA, _countB, _pressure); }}
+#define LogEntry(_fName, _serial, _time, _countA, _countB, _pressure) {File _f = SD_MMC.open(_fName, FILE_APPEND); if (!_f) {Serial.println("Couldn't open log file"); hasSD = false; } else {WriteLog(_f, _serial, _time, _countA, _countB, _pressure); _f.close(); WriteLog(Serial, _serial, _time, _countA, _countB, _pressure); }}
 FTPServer ftp;
 
 double getPressure()
@@ -103,28 +126,6 @@ double getPressure()
   //else Serial.println("error starting temperature measurement\n");
   return 0;
 }
-
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
-#define SSD1306_WHITE WHITE
-#define SSD1306_BLACK BLACK
-#define SSD1306_INVERSE INVERSE
-
-// The pins for I2C are defined by the Wire-library. 
-// On an arduino UNO:       A4(SDA), A5(SCL)
-// On an arduino MEGA 2560: 20(SDA), 21(SCL)
-// On an arduino LEONARDO:   2(SDA),  3(SCL), ...
-#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-int countA = 0, countB = 0;
-uint16_t logNumber = 1;
-String logFileName;
-String snapShotsDir;
-int snapShotsCount = 0;
-bool hasCamera = false;
-bool hasSD = false;
 void ISR_A(){
   countA++;
 }
@@ -167,7 +168,7 @@ void setup() {
   else
   {
     // Serial.println("BMP180 init fail (disconnected?)\n\n");
-    display.println("failed");
+    display.println("FAIL");
     display.display();
   }
 
@@ -177,7 +178,7 @@ void setup() {
   //Serial.println("Starting SD Card");
   if(!SD_MMC.begin("/sdcard", true)){
     // Serial.println("SD Card Mount Failed");
-    display.println("mount failed");
+    display.println("MFAIL");
     display.display();
     delay(1000);
     hasSD = false;
@@ -186,7 +187,7 @@ void setup() {
     uint8_t cardType = SD_MMC.cardType();
     if(cardType == CARD_NONE){
       Serial.println("No SD Card attached");
-      display.println("No SD Card");
+      display.println("No Card");
       display.display();
       delay(1000);
       hasSD = false;
@@ -210,6 +211,46 @@ void setup() {
     display.display();
   }
   if (hasSD) {
+    // check for firmware Updates
+
+    File f = SD_MMC.open("/firmware.bin", "r");
+    if (f){
+      display.clearDisplay();
+      display.drawRect(0,27, 128, 5, SSD1306_WHITE);
+      display.display();
+
+      Serial.print("Firmware found on SD. Trying to update.");
+      Update.onProgress([](size_t currSize, size_t totalSize){
+        display.clearDisplay();
+        display.setCursor(0,0);
+        display.println("Updating firmware");
+        display.print(currSize / (float)totalSize * 100, 0);
+        display.println("% done");
+        display.fillRect(1, 28, (int)round(126.0F * (currSize / (float)totalSize)), 3, SSD1306_WHITE);
+        display.display();
+      });
+      Update.begin(f.size(), U_FLASH);
+      Update.writeStream(f);
+      if(Update.end()){
+        f.close();
+        display.clearDisplay();
+        Serial.println("Update succeeded");
+        display.println("Update succeeded");
+        display.println("Cleaning up");
+        display.display();
+        if(SD_MMC.exists("/firmware.cur"))
+          SD_MMC.remove("/firmware.cur");
+        SD_MMC.rename("/firmware.bin", "/firmware.cur");
+        Serial.println("Firmware updated. Restarting in 1 second");
+        delay(1000);
+        ESP.restart();
+        while(1);// unreachable
+      }
+      else {
+      }
+    }
+
+    
     delay(1000);
     
     for (int i = 1 ; i< 0xFFFF && hasSD;i++){
@@ -222,15 +263,11 @@ void setup() {
       }
         // Serial.println(", doesn't exist");
       // we have found an available slot. Create the file.
-      LogEntry(fName, "SerialNo", "Time_s", "MuonCountA", "MuonCountB", "Altitude_ft");
       logFileName = fName;
       // Serial.print("Log file name: ");
       // Serial.println(logFileName);
       if (hasCamera) {
         snapShotsDir = String("/snapshots_") + String(i);
-        if (!SD_MMC.exists(snapShotsDir)){
-          SD_MMC.mkdir(snapShotsDir);
-        }
         // Serial.print("Snap shots directory: ");
         // Serial.println(snapShotsDir);
       }
@@ -255,6 +292,13 @@ void setup() {
       display.print(i);
       display.display();
       delay(1000);
+    }
+    // Create files and dirs now
+    LogEntry(logFileName, "SerialNo", "Time_s", "MuonCountA", "MuonCountB", "Altitude_ft"); // creates a file as well
+    if (hasCamera){
+        if (!SD_MMC.exists(snapShotsDir)){
+          SD_MMC.mkdir(snapShotsDir);
+        }
     }
   }
 
