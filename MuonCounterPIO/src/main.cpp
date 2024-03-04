@@ -142,6 +142,7 @@ void setup() {
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     //Serial.println(F("SSD1306 allocation failed"));
   }
+  display.setRotation(2);
   // else 
   //   Serial.println(F("SSD1306 allocation done"));
 
